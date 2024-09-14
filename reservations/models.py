@@ -1,6 +1,14 @@
 from django.db import models
 
 # Create your models here.
+
+
+class Day(models.Model):
+    name = models.CharField(max_length=10, unique=True)
+
+    def __str__(self):
+        return self.name
+
 class Bus(models.Model):
     company_name = models.CharField(max_length=120)
     bus_number = models.CharField(max_length=20, unique=True)
@@ -8,7 +16,7 @@ class Bus(models.Model):
     destination = models.CharField(max_length=120)
     start_time = models.TimeField()
     end_time = models.TimeField()
-    frequency = models.CharField(max_length=9) 
+    frequency = models.ManyToManyField(Day) 
     capacity = models.IntegerField()
 
     def __str__(self):

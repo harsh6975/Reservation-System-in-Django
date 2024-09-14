@@ -1,9 +1,11 @@
 from django.shortcuts import render, HttpResponse
 from rest_framework import viewsets, status
 from rest_framework.response import Response
-from .models import Bus, Reservation
+from .models import Bus, Reservation, Day
 from .serializers import BusSerializer, ReservationSerializer
 from django.db.models import F, Sum
+from django.utils.dateparse import parse_date
+
 # Create your views here.
 def index(request):
     return HttpResponse("Welcome to Bus resevation platform")
@@ -17,15 +19,32 @@ class BusViewSet(viewsets.ViewSet):
         if not source or not destination or not date:
             return Response({'error': 'Source, destination, and date are required.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        buses = Bus.objects.filter(source=source, destination=destination)
+        date_obj = parse_date(date)
+        if not date_obj:
+            return Response({'error': 'Invalid date format. Use YYYY-MM-DD.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        day_of_week = date_obj.strftime('%A')
+
+        try:
+            day = Day.objects.get(name=day_of_week)
+        except Day.DoesNotExist:
+            return Response({'error': 'Invalid day.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        buses = Bus.objects.filter(
+            source=source, 
+            destination=destination, 
+            frequency=day
+        )
+
         reservations = Reservation.objects.filter(reservation_date=date)
-        
+
         bus_seat_reservation = reservations.values('bus').annotate(total_reserved=Sum('seats_reserved'))
 
         available_buses = []
         for bus in buses:
             reserved_seats = next((item['total_reserved'] for item in bus_seat_reservation if item['bus'] == bus.id), 0)
             available_seats = bus.capacity - reserved_seats
+
             if available_seats > 0:
                 available_buses.append({
                     'bus_number': bus.bus_number,
@@ -48,6 +67,10 @@ class ReservationViewSet(viewsets.ViewSet):
             bus = Bus.objects.get(bus_number=bus_number)
         except Bus.DoesNotExist:
             return Response({'error': 'Bus not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        day_of_week = parse_date(reservation_date).strftime('%A')
+        if not bus.frequency.filter(name=day_of_week).exists():
+            return Response({'error': 'Bus does not operate on this day.'}, status=status.HTTP_400_BAD_REQUEST)
 
         reservations = Reservation.objects.filter(bus=bus, reservation_date=reservation_date)
         reserved_seats = reservations.aggregate(total_reserved=Sum('seats_reserved'))['total_reserved'] or 0
