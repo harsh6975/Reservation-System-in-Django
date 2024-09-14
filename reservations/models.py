@@ -13,3 +13,13 @@ class Bus(models.Model):
 
     def __str__(self):
         return f"{self.company_name} - {self.bus_number}"
+    
+
+class Reservation(models.Model):
+    bus = models.ForeignKey(Bus, on_delete=models.CASCADE)
+    user_id = models.IntegerField()
+    reservation_date = models.DateField()
+    seats_reserved = models.PositiveIntegerField()
+
+    def __str__(self):
+        return f"User {self.user_id} - {self.bus.bus_number} - {self.seats_reserved} seats"
