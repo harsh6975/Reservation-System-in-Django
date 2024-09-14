@@ -1,14 +1,30 @@
-from django.shortcuts import render, HttpResponse
+from django.shortcuts import HttpResponse
 from rest_framework import viewsets, status
 from rest_framework.response import Response
 from .models import Bus, Reservation, Day
 from .serializers import BusSerializer, ReservationSerializer
-from django.db.models import F, Sum
+from django.db.models import Sum
 from django.utils.dateparse import parse_date
+from django_filters.rest_framework import DjangoFilterBackend
 
-# Create your views here.
+def get_day_of_week(date_str):
+    try:
+        date_obj = parse_date(date_str)
+        if not date_obj:
+            return None, 'Invalid date format. Use YYYY-MM-DD.'
+        
+        day_of_week = date_obj.strftime('%A')
+        day = Day.objects.filter(name=day_of_week).first()
+        if not day:
+            return None, 'Invalid day.'
+
+        return day, None
+    except Exception as e:
+        return None, str(e)
+
+# Create your views here
 def index(request):
-    return HttpResponse("Welcome to Bus resevation platform")
+    return HttpResponse("Welcome to Bus reservation platform")
 
 class BusViewSet(viewsets.ViewSet):
     def list(self, request):
@@ -19,16 +35,9 @@ class BusViewSet(viewsets.ViewSet):
         if not source or not destination or not date:
             return Response({'error': 'Source, destination, and date are required.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        date_obj = parse_date(date)
-        if not date_obj:
-            return Response({'error': 'Invalid date format. Use YYYY-MM-DD.'}, status=status.HTTP_400_BAD_REQUEST)
-
-        day_of_week = date_obj.strftime('%A')
-
-        try:
-            day = Day.objects.get(name=day_of_week)
-        except Day.DoesNotExist:
-            return Response({'error': 'Invalid day.'}, status=status.HTTP_400_BAD_REQUEST)
+        day, error = get_day_of_week(date)
+        if error:
+            return Response({'error': error}, status=status.HTTP_400_BAD_REQUEST)
 
         buses = Bus.objects.filter(
             source=source, 
@@ -36,8 +45,10 @@ class BusViewSet(viewsets.ViewSet):
             frequency=day
         )
 
-        reservations = Reservation.objects.filter(reservation_date=date)
+        if not buses.exists():
+            return Response({'message': 'No buses available for the selected route and day.'}, status=status.HTTP_404_NOT_FOUND)
 
+        reservations = Reservation.objects.filter(reservation_date=date)
         bus_seat_reservation = reservations.values('bus').annotate(total_reserved=Sum('seats_reserved'))
 
         available_buses = []
@@ -54,6 +65,9 @@ class BusViewSet(viewsets.ViewSet):
                     'available_seats': available_seats,
                 })
 
+        if not available_buses:
+            return Response({'message': 'No buses with available seats.'}, status=status.HTTP_404_NOT_FOUND)
+
         return Response(available_buses, status=status.HTTP_200_OK)
 
 class ReservationViewSet(viewsets.ViewSet):
@@ -62,6 +76,9 @@ class ReservationViewSet(viewsets.ViewSet):
         user_id = request.data.get('user_id')
         reservation_date = request.data.get('reservation_date')
         seats_reserved = request.data.get('seats_reserved')
+
+        if not all([bus_number, user_id, reservation_date, seats_reserved]):
+            return Response({'error': 'All fields (bus_number, user_id, reservation_date, seats_reserved) are required.'}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
             bus = Bus.objects.get(bus_number=bus_number)
@@ -76,7 +93,7 @@ class ReservationViewSet(viewsets.ViewSet):
         reserved_seats = reservations.aggregate(total_reserved=Sum('seats_reserved'))['total_reserved'] or 0
         available_seats = bus.capacity - reserved_seats
 
-        if seats_reserved > available_seats:
+        if int(seats_reserved) > available_seats:
             return Response({'error': 'Not enough seats available.'}, status=status.HTTP_400_BAD_REQUEST)
 
         reservation = Reservation.objects.create(
@@ -93,4 +110,7 @@ class ReservationViewSet(viewsets.ViewSet):
             return Response({'error': 'User ID is required.'}, status=status.HTTP_400_BAD_REQUEST)
 
         reservations = Reservation.objects.filter(user_id=user_id)
+        if not reservations.exists():
+            return Response({'message': 'No reservations found for the user.'}, status=status.HTTP_404_NOT_FOUND)
+
         return Response(ReservationSerializer(reservations, many=True).data, status=status.HTTP_200_OK)
